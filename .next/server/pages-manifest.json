@@ -1,0 +1,11 @@
+{
+  "/_app": "pages/_app.js",
+  "/_error": "pages/_error.js",
+  "/_document": "pages/_document.js",
+  "/dashboard": "pages/dashboard.js",
+  "/": "pages/index.js",
+  "/api/active-check": "pages/api/active-check.js",
+  "/api/check-pin": "pages/api/check-pin.js",
+  "/api/signout": "pages/api/signout.js",
+  "/api/dashboard": "pages/api/dashboard.js"
+}
