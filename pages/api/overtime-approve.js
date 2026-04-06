@@ -19,7 +19,7 @@ export default async function handler(req, res) {
     return res.status(405).json({ success: false, message: 'Method not allowed' });
   }
 
-  const { rowNumber, action, managerName, pin } = req.body;
+  const { rowNumber, action, managerName, pin, adjustedDuration } = req.body;
 
   if (!rowNumber || !action || !managerName || pin === undefined) {
     return res.status(400).json({ success: false, message: 'rowNumber, action, managerName, and pin are required.' });
@@ -60,11 +60,15 @@ export default async function handler(req, res) {
     }
 
     // ── Apply approval ────────────────────────────────────────────────────────
-    await updateOvertimeRow(Number(rowNumber), {
+    const updates = {
       'Approval Status':    action,
       'Approved By':        managerName,
       'Approval Timestamp': ukDateTimeString(),
-    });
+    };
+    if (action === 'APPROVED' && adjustedDuration) {
+      updates['Adjusted Duration'] = adjustedDuration;
+    }
+    await updateOvertimeRow(Number(rowNumber), updates);
 
     return res.status(200).json({
       success: true,

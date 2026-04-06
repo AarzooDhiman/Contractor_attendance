@@ -310,17 +310,22 @@ function PinGate({ onUnlock }) {
 
 // ── Approval PIN modal ────────────────────────────────────────────────────────
 function ApprovalModal({ target, action, managerName, onConfirm, onCancel }) {
-  const [pin, setPin]         = useState('');
-  const [error, setError]     = useState('');
-  const [loading, setLoading] = useState(false);
+  const [pin,              setPin]              = useState('');
+  const [adjustedDuration, setAdjustedDuration] = useState(target.duration || '');
+  const [error, setError]                       = useState('');
+  const [loading, setLoading]                   = useState(false);
 
   async function handleConfirm() {
     if (!pin) { setError('Please enter your PIN.'); return; }
     setLoading(true); setError('');
     try {
+      const body = { rowNumber: target._row, action, managerName, pin };
+      if (action === 'APPROVED' && adjustedDuration.trim()) {
+        body.adjustedDuration = adjustedDuration.trim();
+      }
       const res  = await fetch('/api/overtime-approve', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ rowNumber: target._row, action, managerName, pin }),
+        body: JSON.stringify(body),
       });
       const data = await res.json();
       if (data.success) { onConfirm(data.message); }
@@ -337,9 +342,23 @@ function ApprovalModal({ target, action, managerName, onConfirm, onCancel }) {
         <p className="text-sm text-muted" style={{ marginBottom: 12 }}>
           Engineer: <strong>{target.engineerName}</strong><br />
           Date: {fmtDate(target.startTimestamp)}<br />
-          Duration: {target.duration}<br />
           Manager: {managerName}
         </p>
+        {action === 'APPROVED' && (
+          <div className="form-group">
+            <label htmlFor="adjustedDuration">Duration</label>
+            <input
+              id="adjustedDuration"
+              type="text"
+              value={adjustedDuration}
+              onChange={(e) => setAdjustedDuration(e.target.value)}
+              placeholder="e.g. 2h 30m"
+            />
+            <p className="text-muted" style={{ fontSize: '0.78rem', marginTop: 4 }}>
+              Edit if the approved duration differs from the recorded duration ({target.duration}).
+            </p>
+          </div>
+        )}
         <p className="text-sm" style={{ marginBottom: 8 }}>Enter your manager PIN to confirm.</p>
         {error && <div className="alert alert--error">{error}</div>}
         <div className="form-group">
@@ -510,7 +529,7 @@ export default function Dashboard() {
     const name = r.engineerName;
     if (!acc[name]) acc[name] = { sessions: 0, totalHours: 0 };
     acc[name].sessions++;
-    acc[name].totalHours += parseHours(r.duration);
+    acc[name].totalHours += parseHours(r.adjustedDuration || r.duration);
     return acc;
   }, {});
 
@@ -988,7 +1007,11 @@ export default function Dashboard() {
                             <td>{fmtDate(row.startTimestamp)}</td>
                             <td>{fmtTime(row.startTimestamp)}</td>
                             <td>{fmtTime(row.endTimestamp)}</td>
-                            <td>{row.duration}</td>
+                            <td>
+                              {row.adjustedDuration
+                                ? <><strong>{row.adjustedDuration}</strong> <span className="text-muted" style={{ fontSize: '0.78rem' }}>(adj. from {row.duration})</span></>
+                                : row.duration}
+                            </td>
                             <td style={{ maxWidth: 180, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
                               {row.workDescription || <span className="text-muted">—</span>}
                             </td>

@@ -56,6 +56,7 @@ export default async function handler(req, res) {
       approvalTimestamp: r['Approval Timestamp'],
       notes:             r['Notes'],
       duration:          calcDuration(r['Start Timestamp'], r['End Timestamp']),
+      adjustedDuration:  r['Adjusted Duration'] || '',
     }));
 
     return res.status(200).json({ success: true, records });
