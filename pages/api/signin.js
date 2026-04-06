@@ -4,7 +4,12 @@
  * Body: {
  *   companyName, operativeName, idNumber,
  *   buildings, pointOfContact, contactNumber,
- *   ramsSubmitted, declarationConfirmed
+ *   ramsSubmitted, declarationConfirmed,
+ *   // New H&S fields (optional-safe for old records):
+ *   contractorType, permitRequired, permitTypes,
+ *   fireSafetyAffected, asbestosChecked,
+ *   ramsApproved, inductionComplete, insuranceValid,
+ *   lastRAMSReviewDate, lastInductionDate, lastComplianceDate
  * }
  */
 import { appendRow, findActiveSession } from '../../lib/excel';
@@ -24,6 +29,18 @@ export default async function handler(req, res) {
     contactNumber,
     ramsSubmitted,
     declarationConfirmed,
+    // New H&S fields
+    contractorType,
+    permitRequired,
+    permitTypes,
+    fireSafetyAffected,
+    asbestosChecked,
+    ramsApproved,
+    inductionComplete,
+    insuranceValid,
+    lastRAMSReviewDate,
+    lastInductionDate,
+    lastComplianceDate,
   } = req.body;
 
   if (!companyName || !operativeName || !idNumber) {
@@ -49,20 +66,32 @@ export default async function handler(req, res) {
     }
 
     await appendRow({
-      'Date':                 today,
-      'Company Name':         companyName.trim(),
-      'Operative Name':       operativeName.trim(),
-      'ID Number':            String(idNumber).trim(),
-      'Buildings':            buildings || '',
-      'Point of Contact':     pointOfContact || '',
-      'Contact Number':       contactNumber || '',
-      'RAMS Submitted':       ramsSubmitted || '',
+      'Date':                  today,
+      'Company Name':          companyName.trim(),
+      'Operative Name':        operativeName.trim(),
+      'ID Number':             String(idNumber).trim(),
+      'Buildings':             buildings || '',
+      'Point of Contact':      pointOfContact || '',
+      'Contact Number':        contactNumber || '',
+      'RAMS Submitted':        ramsSubmitted || '',
       'Declaration Confirmed': declarationConfirmed || 'Yes',
-      'Sign-In Time':         ukDateTimeString(),
-      'Sign-Out Time':        '',
-      'Work Completed':       '',
-      'Status':               'Active',
-      'Photo URL':            '',
+      'Sign-In Time':          ukDateTimeString(),
+      'Sign-Out Time':         '',
+      'Work Completed':        '',
+      'Status':                'Active',
+      'Photo URL':             '',
+      // New H&S columns
+      'Contractor Type':       contractorType || '',
+      'Permit Required':       permitRequired || '',
+      'Permit Types':          permitTypes || '',
+      'Fire Safety Affected':  fireSafetyAffected || '',
+      'Asbestos Checked':      asbestosChecked || '',
+      'RAMS Approved':         ramsApproved || '',
+      'Induction Complete':    inductionComplete || '',
+      'Insurance Valid':       insuranceValid || '',
+      'Last RAMS Review Date': lastRAMSReviewDate || '',
+      'Last Induction Date':   lastInductionDate || '',
+      'Last Compliance Date':  lastComplianceDate || '',
     });
 
     return res.status(200).json({

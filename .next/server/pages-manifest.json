@@ -4,8 +4,11 @@
   "/_document": "pages/_document.js",
   "/dashboard": "pages/dashboard.js",
   "/": "pages/index.js",
-  "/api/active-check": "pages/api/active-check.js",
+  "/api/overtime-list": "pages/api/overtime-list.js",
+  "/api/dashboard": "pages/api/dashboard.js",
+  "/api/compliance-list": "pages/api/compliance-list.js",
   "/api/check-pin": "pages/api/check-pin.js",
-  "/api/signout": "pages/api/signout.js",
-  "/api/dashboard": "pages/api/dashboard.js"
+  "/api/compliance-files": "pages/api/compliance-files.js",
+  "/api/compliance-update": "pages/api/compliance-update.js",
+  "/api/compliance-serve": "pages/api/compliance-serve.js"
 }

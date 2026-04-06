@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 
 // Options are alphabetical with "Other" always last
 const BUILDINGS = [
@@ -32,6 +32,15 @@ const COMPANIES = [
   'Other',
 ];
 
+const PERMIT_TYPES = [
+  'Hot Works',
+  'Working at Height',
+  'Electrical Isolation',
+  'Confined Space',
+  'Fire Alarm Isolation',
+  'Other',
+];
+
 const BLANK = {
   buildings:     [],
   buildingOther: '',
@@ -47,13 +56,34 @@ const BLANK = {
   declaration:   false,
 };
 
+const BLANK_HS = {
+  permitTypes:        [],
+  permitOther:        '',
+  fireSafetyAffected: '',
+  fireAlarmIsolation: '',
+  fireWatch:          '',
+  asbestosChecked:    '',
+  ramsApproved:       '',
+  inductionComplete:  '',
+  insuranceValid:     '',
+};
+
 export default function SignInForm() {
   const [f, setF]           = useState(BLANK);
   const [loading, setLoading] = useState(false);
   const [result, setResult]   = useState(null);
 
+  // H&S state
+  const [hs, setHs]                       = useState(BLANK_HS);
+  const [contractorLookup, setLookup]     = useState(null); // null = not yet looked up
+  const [lookingUp, setLookingUp]         = useState(false);
+
   function set(key, value) {
     setF((prev) => ({ ...prev, [key]: value }));
+  }
+
+  function setH(key, value) {
+    setHs((prev) => ({ ...prev, [key]: value }));
   }
 
   function toggleBuilding(b) {
@@ -65,6 +95,54 @@ export default function SignInForm() {
     }));
   }
 
+  function togglePermit(pt) {
+    setHs((prev) => ({
+      ...prev,
+      permitTypes: prev.permitTypes.includes(pt)
+        ? prev.permitTypes.filter((x) => x !== pt)
+        : [...prev.permitTypes, pt],
+    }));
+  }
+
+  // ── Company lookup ────────────────────────────────────────────────────────────
+  const doLookup = useCallback(async (companyName) => {
+    if (!companyName) { setLookup(null); return; }
+    setLookingUp(true);
+    setLookup(null);
+    try {
+      const res  = await fetch(`/api/contractor-lookup?company=${encodeURIComponent(companyName)}`);
+      const data = await res.json();
+      setLookup(data);
+    } catch {
+      setLookup({ contractorType: 'FIRST_TIME' }); // safe default on network error
+    } finally {
+      setLookingUp(false);
+    }
+  }, []);
+
+  // Trigger immediately when a known company is selected from dropdown
+  function handleCompanyChange(e) {
+    set('company', e.target.value);
+    if (e.target.value && e.target.value !== 'Other') {
+      doLookup(e.target.value);
+    } else if (!e.target.value) {
+      setLookup(null);
+    }
+  }
+
+  // Debounced lookup for "Other" free-text company
+  useEffect(() => {
+    if (f.company !== 'Other' || !f.companyOther.trim()) return;
+    const timer = setTimeout(() => doLookup(f.companyOther.trim()), 600);
+    return () => clearTimeout(timer);
+  }, [f.company, f.companyOther, doLookup]);
+
+  // ── Compliance expiry logic ───────────────────────────────────────────────────
+  const isFirstTime   = contractorLookup?.contractorType === 'FIRST_TIME';
+  const anyExpired    = contractorLookup?.ramsExpired || contractorLookup?.inductionExpired || contractorLookup?.complianceExpired;
+  const showConditional = contractorLookup && (isFirstTime || anyExpired);
+
+  // ── Validation ────────────────────────────────────────────────────────────────
   function validate() {
     if (f.buildings.length === 0)
       return 'Please select at least one building.';
@@ -96,8 +174,25 @@ export default function SignInForm() {
     }
     if (!/^\d{3}$/.test(f.idNumber))
       return 'Contractor unique ID must be exactly three digits (e.g. 001).';
-    if (!f.rams)
-      return 'Please answer the RAMS question.';
+    {/*if (!f.rams)
+      return 'Please answer the RAMS question.';*/}
+
+    // H&S validation (only if lookup has run)
+    if (contractorLookup) {
+      if (!hs.fireSafetyAffected)
+        return 'Please indicate whether your work will affect fire safety systems.';
+      if (!hs.asbestosChecked)
+        return 'Please confirm you have checked the asbestos register.';
+      if (hs.asbestosChecked === 'No')
+        return 'You must check the asbestos register for your work area before signing in.';
+      if (showConditional && !hs.ramsApproved)
+        return 'Please confirm RAMS approval status.';
+      if (showConditional && !hs.inductionComplete)
+        return 'Please confirm whether site induction has been completed.';
+      if (showConditional && !hs.insuranceValid)
+        return 'Please confirm insurance validity.';
+    }
+
     if (!f.declaration)
       return 'You must confirm the declaration before signing in.';
     return null;
@@ -115,6 +210,12 @@ export default function SignInForm() {
     const companyDisplay = f.company === 'Other' ? f.companyOther.trim() : f.company;
     const ramsDisplay    = f.rams === 'Other' ? `Other – ${f.ramsOther.trim()}` : f.rams;
 
+    const permitTypesDisplay = hs.permitTypes
+      .map((pt) => pt === 'Other' ? (hs.permitOther.trim() || 'Other') : pt)
+      .join(', ');
+
+    const today = new Date().toISOString().split('T')[0];
+
     setLoading(true);
     try {
       const res = await fetch('/api/signin', {
@@ -129,6 +230,24 @@ export default function SignInForm() {
           contactNumber:        f.contactNumber.trim(),
           ramsSubmitted:        ramsDisplay,
           declarationConfirmed: 'Yes',
+          // New H&S fields
+          contractorType:       contractorLookup?.contractorType || '',
+          permitRequired:       hs.permitTypes.length > 0 ? 'Yes' : 'No',
+          permitTypes:          permitTypesDisplay,
+          fireSafetyAffected:   hs.fireSafetyAffected
+            ? hs.fireSafetyAffected + (
+                hs.fireSafetyAffected === 'Yes'
+                  ? ` (Alarm isolation: ${hs.fireAlarmIsolation || 'N/A'}, Fire watch: ${hs.fireWatch || 'N/A'})`
+                  : ''
+              )
+            : '',
+          asbestosChecked:      hs.asbestosChecked,
+          ramsApproved:         hs.ramsApproved || '',
+          inductionComplete:    hs.inductionComplete || '',
+          insuranceValid:       hs.insuranceValid || '',
+          lastRAMSReviewDate:   hs.ramsApproved === 'Yes' ? today : '',
+          lastInductionDate:    hs.inductionComplete === 'Yes' ? today : '',
+          lastComplianceDate:   hs.insuranceValid === 'Yes' ? today : '',
         }),
       });
 
@@ -136,6 +255,8 @@ export default function SignInForm() {
       if (data.success) {
         setResult({ type: 'success', message: data.message });
         setF(BLANK);
+        setHs(BLANK_HS);
+        setLookup(null);
       } else {
         setResult({ type: 'error', message: data.message });
       }
@@ -157,10 +278,10 @@ export default function SignInForm() {
       <div className="card">
         <p className="card__title">Contractor Details</p>
 
-        {/* Q3 — Company (shown first so it flows naturally) */}
+        {/* Company */}
         <div className="form-group">
           <label htmlFor="company">Company name *</label>
-          <select id="company" value={f.company} onChange={(e) => set('company', e.target.value)}>
+          <select id="company" value={f.company} onChange={handleCompanyChange}>
             <option value="">— Select company —</option>
             {COMPANIES.map((c) => <option key={c} value={c}>{c}</option>)}
           </select>
@@ -173,9 +294,19 @@ export default function SignInForm() {
               placeholder="Please specify your company…"
             />
           )}
+          {lookingUp && (
+            <p className="text-sm text-muted" style={{ marginTop: 4 }}>Checking contractor records…</p>
+          )}
+          {contractorLookup && !lookingUp && (
+            <p className="text-sm" style={{ marginTop: 4, color: isFirstTime ? '#b45309' : '#15803d' }}>
+              {isFirstTime
+                ? 'First visit — all H&S questions are required.'
+                : `Returning contractor (${contractorLookup.rowCount} previous visit${contractorLookup.rowCount !== 1 ? 's' : ''}).${anyExpired ? ' Some compliance has expired.' : ''}`}
+            </p>
+          )}
         </div>
 
-        {/* Q4 — Operative name */}
+        {/* Operative name */}
         <div className="form-group">
           <label htmlFor="operativeName">Operative's full name *</label>
           <input
@@ -188,7 +319,7 @@ export default function SignInForm() {
           />
         </div>
 
-        {/* Q5 — Contact number */}
+        {/* Contact number */}
         <div className="form-group">
           <label htmlFor="contactNumber">Contact number *</label>
           <input
@@ -201,7 +332,7 @@ export default function SignInForm() {
           />
         </div>
 
-        {/* Q6 — Unique ID */}
+        {/* Unique ID */}
         <div className="form-group">
           <label htmlFor="idNumber">
             Contractor unique ID *
@@ -223,7 +354,7 @@ export default function SignInForm() {
       <div className="card">
         <p className="card__title">Site Information</p>
 
-        {/* Q1 — Buildings (multiple choice) */}
+        {/* Buildings */}
         <div className="form-group">
           <label>
             Which building(s) are you working in today? *
@@ -252,7 +383,7 @@ export default function SignInForm() {
           )}
         </div>
 
-        {/* Q2 — Point of contact */}
+        {/* Point of contact */}
         <div className="form-group">
           <label htmlFor="contact">Point of contact *</label>
           <select id="contact" value={f.contact} onChange={(e) => set('contact', e.target.value)}>
@@ -271,11 +402,213 @@ export default function SignInForm() {
         </div>
       </div>
 
-      <div className="card">
-        <p className="card__title">Health &amp; Safety</p>
+      {/* ── H&S Checks — shown after company lookup ─────────────────────────── */}
+      {contractorLookup && (
+        <div className="card">
+          <p className="card__title">Health &amp; Safety Checks</p>
 
-        {/* Q7 — RAMS */}
-        <div className="form-group">
+          {/* Compliance expiry warning — prominent banner */}
+          {anyExpired && (
+            <div className="alert alert--error" style={{ marginBottom: 16 }}>
+              <strong>Compliance Expired</strong> — the following must be re-confirmed before proceeding:
+              <ul style={{ margin: '6px 0 0', paddingLeft: 20, fontSize: '0.875rem', lineHeight: '1.6' }}>
+                {contractorLookup.ramsExpired && (
+                  <li>
+                    RAMS
+                    {contractorLookup.lastRAMSReviewDate
+                      ? ` — last confirmed ${contractorLookup.lastRAMSReviewDate}`
+                      : ' — never recorded'}
+                    {contractorLookup.ramsExpiry ? ` (expired ${contractorLookup.ramsExpiry})` : ''}
+                  </li>
+                )}
+                {contractorLookup.inductionExpired && (
+                  <li>
+                    Site Induction
+                    {contractorLookup.lastInductionDate
+                      ? ` — last confirmed ${contractorLookup.lastInductionDate}`
+                      : ' — never recorded'}
+                    {contractorLookup.inductionExpiry ? ` (expired ${contractorLookup.inductionExpiry})` : ''}
+                  </li>
+                )}
+                {contractorLookup.complianceExpired && (
+                  <li>
+                    Insurance
+                    {contractorLookup.lastComplianceDate
+                      ? ` — last confirmed ${contractorLookup.lastComplianceDate}`
+                      : ' — never recorded'}
+                    {contractorLookup.insuranceExpiry ? ` (expired ${contractorLookup.insuranceExpiry})` : ''}
+                  </li>
+                )}
+              </ul>
+            </div>
+          )}
+
+          {/* Q1 — Permit to Work */}
+          <div className="form-group">
+            <label>Permit to Work required? <span className="field-hint">Select all that apply</span></label>
+            <div className="checkbox-group">
+              {PERMIT_TYPES.map((pt) => (
+                <label key={pt} className="checkbox-label">
+                  <input
+                    type="checkbox"
+                    checked={hs.permitTypes.includes(pt)}
+                    onChange={() => togglePermit(pt)}
+                  />
+                  <span>{pt}</span>
+                </label>
+              ))}
+            </div>
+            {hs.permitTypes.includes('Other') && (
+              <input
+                type="text"
+                className="mt-2"
+                value={hs.permitOther}
+                onChange={(e) => setH('permitOther', e.target.value)}
+                placeholder="Please specify permit type…"
+              />
+            )}
+          </div>
+
+          {/* Q2 — Fire safety */}
+          <div className="form-group">
+            <label htmlFor="fireSafety">Will your work affect fire safety systems? *</label>
+            <select
+              id="fireSafety"
+              value={hs.fireSafetyAffected}
+              onChange={(e) => setH('fireSafetyAffected', e.target.value)}
+            >
+              <option value="">— Select —</option>
+              <option value="Yes">Yes</option>
+              <option value="No">No</option>
+            </select>
+
+            {hs.fireSafetyAffected === 'Yes' && (
+              <div style={{ marginTop: 10, paddingLeft: 12, borderLeft: '3px solid #fbbf24' }}>
+                <div className="form-group" style={{ marginBottom: 8 }}>
+                  <label style={{ fontSize: '0.875rem' }}>Fire alarm isolation required?</label>
+                  <select
+                    value={hs.fireAlarmIsolation}
+                    onChange={(e) => setH('fireAlarmIsolation', e.target.value)}
+                  >
+                    <option value="">— Select —</option>
+                    <option value="Yes">Yes</option>
+                    <option value="No">No</option>
+                  </select>
+                </div>
+                <div className="form-group" style={{ marginBottom: 0 }}>
+                  <label style={{ fontSize: '0.875rem' }}>Fire watch required?</label>
+                  <select
+                    value={hs.fireWatch}
+                    onChange={(e) => setH('fireWatch', e.target.value)}
+                  >
+                    <option value="">— Select —</option>
+                    <option value="Yes">Yes</option>
+                    <option value="No">No</option>
+                  </select>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Q3 — Asbestos register */}
+          <div className="form-group">
+            <label htmlFor="asbestos">Have you checked the asbestos register for your work area? *</label>
+            <select
+              id="asbestos"
+              value={hs.asbestosChecked}
+              onChange={(e) => setH('asbestosChecked', e.target.value)}
+            >
+              <option value="">— Select —</option>
+              <option value="Yes">Yes</option>
+              <option value="No">No</option>
+              <option value="Not Applicable">Not Applicable</option>
+            </select>
+            {hs.asbestosChecked === 'No' && (
+              <div className="alert alert--error" style={{ marginTop: 8 }}>
+                You must check the asbestos register before proceeding on site.
+              </div>
+            )}
+          </div>
+
+          {/* Q4–Q6 — Conditional: first-time or any compliance expired */}
+          {showConditional && (
+            <>
+              {isFirstTime && (
+                <div className="alert alert--info" style={{ marginBottom: 12 }}>
+                  First visit — please answer all compliance questions below.
+                </div>
+              )}
+              {!isFirstTime && anyExpired && (
+                <div className="alert alert--info" style={{ marginBottom: 12 }}>
+                  Some compliance has expired — please re-confirm below.
+                  {contractorLookup.ramsExpired && <> RAMS expired.</>}
+                  {contractorLookup.inductionExpired && <> Induction expired.</>}
+                  {contractorLookup.complianceExpired && <> Insurance expired.</>}
+                </div>
+              )}
+
+              {/* Q4 — RAMS approved */}
+              <div className="form-group">
+                <label htmlFor="ramsApproved">RAMS submitted and approved? *</label>
+                <select
+                  id="ramsApproved"
+                  value={hs.ramsApproved}
+                  onChange={(e) => setH('ramsApproved', e.target.value)}
+                >
+                  <option value="">— Select —</option>
+                  <option value="Yes">Yes</option>
+                  <option value="No">No</option>
+                  <option value="Other">Other</option>
+                </select>
+              </div>
+
+              {/* Q5 — Site induction */}
+              <div className="form-group">
+                <label htmlFor="inductionComplete">Site induction completed? *</label>
+                <select
+                  id="inductionComplete"
+                  value={hs.inductionComplete}
+                  onChange={(e) => setH('inductionComplete', e.target.value)}
+                >
+                  <option value="">— Select —</option>
+                  <option value="Yes">Yes</option>
+                  <option value="No">No</option>
+                </select>
+                {hs.inductionComplete === 'No' && (
+                  <p className="text-sm" style={{ color: '#b45309', marginTop: 4 }}>
+                    Warning: site induction not complete. You must not proceed.
+                  </p>
+                )}
+              </div>
+
+              {/* Q6 — Insurance */}
+              <div className="form-group">
+                <label htmlFor="insuranceValid">Insurance valid? *</label>
+                <select
+                  id="insuranceValid"
+                  value={hs.insuranceValid}
+                  onChange={(e) => setH('insuranceValid', e.target.value)}
+                >
+                  <option value="">— Select —</option>
+                  <option value="Yes">Yes</option>
+                  <option value="No">No</option>
+                </select>
+                {hs.insuranceValid === 'No' && (
+                  <p className="text-sm" style={{ color: '#b45309', marginTop: 4 }}>
+                    Warning: insurance not confirmed. You must not proceed.
+                  </p>
+                )}
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      <div className="card">
+        <p className="card__title">Declaration</p>
+
+        {/* RAMS */}
+        {/*<div className="form-group">
           <label htmlFor="rams">Have you signed and submitted your RAMS? *</label>
           <select id="rams" value={f.rams} onChange={(e) => set('rams', e.target.value)}>
             <option value="">— Select —</option>
@@ -293,9 +626,9 @@ export default function SignInForm() {
               style={{ resize: 'vertical' }}
             />
           )}
-        </div>
+        </div>*/}
 
-        {/* Q8 — Declaration */}
+        {/* Declaration */}
         <div className="form-group">
           <label style={{ marginBottom: 8 }}>Declaration *</label>
           <label className="checkbox-label checkbox-label--declaration">
